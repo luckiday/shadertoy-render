@@ -17,6 +17,7 @@ import sys
 import time
 
 import numpy
+import numpy as np
 
 import vispy
 from vispy import app
@@ -29,7 +30,6 @@ import vispy.util.keys as keys
 import watchdog
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-
 
 vertex = """
 #version 120
@@ -45,7 +45,7 @@ fragment_template = """
 #version 120
 
 uniform vec3      iResolution;           // viewport resolution (in pixels)
-uniform float     iGlobalTime;           // shader playback time (in seconds)
+uniform float     iTime;           // shader playback time (in seconds)
 uniform vec4      iMouse;                // mouse pixel coords
 uniform vec4      iDate;                 // (year, month, day, time in seconds)
 uniform float     iSampleRate;           // sound sample rate (i.e., 44100)
@@ -71,7 +71,7 @@ error_shader = """
 void mainImage( out vec4 fragColor, in vec2 fragCoord )
 {
     vec2 uv = fragCoord.xy / iResolution.xy;
-    fragColor = vec4(uv,0.5+0.5*sin(iGlobalTime),1.0);
+    fragColor = vec4(uv,0.5+0.5*sin(iTime),1.0);
 }
 """
 
@@ -141,7 +141,7 @@ class RenderingCanvas(app.Canvas):
 
         self._render_frame_index = 0
 
-        clock = time.clock()
+        clock = time.time()
         self._clock_time_zero = clock - start_time
         self._clock_time_start = clock
 
@@ -158,7 +158,7 @@ class RenderingCanvas(app.Canvas):
 
         for i in range(4):
             self.program['iChannelTime[%d]' % i] = 0.0
-        self.program['iGlobalTime'] = start_time
+        self.program['iTime'] = start_time
 
         self.program['iOffset'] = 0.0, 0.0
 
@@ -210,14 +210,21 @@ class RenderingCanvas(app.Canvas):
     def advance_time(self):
         if not self._paused:
             if self._interval == 'auto':
-                self.program['iGlobalTime'] = time.clock() - self._clock_time_zero
+                self.program['iTime'] = time.time() - self._clock_time_zero
             else:
-                self.program['iGlobalTime'] += self._interval
+                self.program['iTime'] += self._interval
 
     def write_video_frame(self, img):
         if img.shape[0] != self._output_size[1] or img.shape[1] != self._output_size[0]:
             warn("Frame data is wrong size! Video will be corrupted.")
-
+        # self.write_img(img)
+        # Split the rgb and a channel
+        depth_map = np.zeros(img.shape, dtype=np.uint8)
+        print(depth_map.shape)
+        for i in range(3):
+            depth_map[:, :, i] = img[:, :, 3]
+        depth_map[:, :, 3] = 255
+        img = np.concatenate([img, depth_map], axis=1)
         self._ffmpeg_pipe.write(img.tostring())
 
     def draw(self):
@@ -344,7 +351,7 @@ class RenderingCanvas(app.Canvas):
             if event.key == keys.LEFT:
                 step *= -1.0
 
-            self.program['iGlobalTime'] += step
+            self.program['iTime'] += step
 
             self.print_t()
 
@@ -363,7 +370,7 @@ class RenderingCanvas(app.Canvas):
 
             self._tile_index += 1
 
-            clock_time_elapsed = time.clock() - self._clock_time_start
+            clock_time_elapsed = time.time() - self._clock_time_start
             rendered_tile_count = self._tile_index + self._render_frame_index * self._tile_count
             total_tile_count = self._tile_count * self._render_frame_count
             clock_time_per_tile = clock_time_elapsed / float(rendered_tile_count)
@@ -417,8 +424,8 @@ class RenderingCanvas(app.Canvas):
     def process_errors(self, errors):
         # NOTE (jasminp) Error message format depends on driver. Does this catch them all?
 
-        lp = [re.compile(r'.*?0:(\d+): (.*)'),          # intel/win
-              re.compile(r'0\((\d+)\) :[^:]*: (.*)')]   # nvidia/win
+        lp = [re.compile(r'.*?0:(\d+): (.*)'),  # intel/win
+              re.compile(r'0\((\d+)\) :[^:]*: (.*)')]  # nvidia/win
 
         linesOut = []
         for line in errors.split('\n'):
@@ -427,15 +434,15 @@ class RenderingCanvas(app.Canvas):
                 result = p.match(line)
                 if result:
                     linesOut.append("%s(%d): error: %s" % (self._filename,
-                                                        int(result.group(1)) - preamble_lines,
-                                                        result.group(2)))
+                                                           int(result.group(1)) - preamble_lines,
+                                                           result.group(2)))
                     break
             if not result:
                 linesOut.append(line)
         return '\n'.join(linesOut)
 
     def print_t(self):
-        print("t=%f" % self.program['iGlobalTime'])
+        print("t=%f" % self.program['iTime'])
 
     def ensure_timer(self):
         if not self._timer:
@@ -445,7 +452,7 @@ class RenderingCanvas(app.Canvas):
 
     def update_timer_state(self):
         if not self._paused:
-            self._clock_time_zero = time.clock() - self.program['iGlobalTime']
+            self._clock_time_zero = time.time() - self.program['iTime']
             self.ensure_timer()
         else:
             if self._profile:
@@ -459,8 +466,8 @@ class RenderingCanvas(app.Canvas):
 
     def write_img(self, img, filename=None):
         if filename is None:
-            suffix = 0;
-            filepat = "screen%d.png"
+            suffix = 0
+            filepat = "progress/%04d.png"
             while os.path.exists(filepat % suffix):
                 suffix = suffix + 1
             filename = filepat % suffix
@@ -505,7 +512,8 @@ if __name__ == '__main__':
                         help='Position of the viewport, e.g. 100,100 (string).')
     parser.add_argument('--time', type=float, default=0.0, help="Initial time value.")
     parser.add_argument('--rate', type=int, default=None, help='Number of frames per second to render, e.g. 60 (int).')
-    parser.add_argument('--duration', type=float, default=None, help='Total seconds of video to encode, e.g. 30.0 (float).')
+    parser.add_argument('--duration', type=float, default=None,
+                        help='Total seconds of video to encode, e.g. 30.0 (float).')
     parser.add_argument('--top', action='store_true', help="Keep window on top.")
     parser.add_argument('--pause', action='store_true', help="Start paused.")
     parser.add_argument('--tile-size', type=int, default=None, help="Tile size for tiled rendering, e.g. 256 (int).")
@@ -518,11 +526,13 @@ if __name__ == '__main__':
     parser.add_argument('--interactive',
                         action='store_true',
                         help="Render interactively. This is the default unless --output is specified.")
-    parser.add_argument('--verbose', default=False, action='store_true', help='Call subprocess with a high logging level.')
+    parser.add_argument('--verbose', default=False, action='store_true',
+                        help='Call subprocess with a high logging level.')
 
     args = parser.parse_args()
 
     resolution = tuple(int(i) for i in args.size.split('x'))
+    resolution = tuple([int(resolution[0]/2), resolution[1]])
     position = tuple(int(i) for i in args.pos.split(',')) if args.pos is not None else None
 
     output_to_video = False
