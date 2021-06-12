@@ -220,7 +220,6 @@ class RenderingCanvas(app.Canvas):
         # self.write_img(img)
         # Split the rgb and a channel
         depth_map = np.zeros(img.shape, dtype=np.uint8)
-        print(depth_map.shape)
         for i in range(3):
             depth_map[:, :, i] = img[:, :, 3]
         depth_map[:, :, 3] = 255
