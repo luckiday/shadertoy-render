@@ -6,7 +6,7 @@ shadertoy-render
 
 A simple Python script that uses ``ffmpeg`` as a subprocess to render ShaderToy scripts into video files.  After grabbing the file from the repository, you can run it as follows:
 
-	> python shadertoy-render.py example.glsl example.mp4
+	> python shadertoy-render.py example.glsl --output example.mp4
 
 Command-line arguments are documented with the ``-h`` switch, for example:
 
@@ -17,7 +17,7 @@ Command-line arguments are documented with the ``-h`` switch, for example:
 
 Example of more advanced usage:
 
-	> python shadertoy-render.py in.glsl out.mp4 --size=1920x1080 --rate=60 --duration=120.0
+	> python shadertoy-render.py in.glsl --output out.mp4 --size=1920x1080 --rate=60 --duration=120.0
 
 It should run on Linux and OSX where ``ffmpeg`` is in the path, on Windows with minor changes assuming the binary is found.  Python dependencies include `numpy` and `vispy`, which you can install them with PIP as follows:
 
